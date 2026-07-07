@@ -1890,7 +1890,7 @@
           await saveSharedShipmentData(fileName, mode);
         } catch (err) {
           console.error("Shared shipment DB save failed.", err);
-          alert("Data is visible in this browser, but shared viewer storage failed. Please redeploy after checking Netlify Functions/Blobs setup.");
+          alert(`Data is visible in this browser, but shared viewer storage failed.\n\nReason: ${err.message || err}\n\nOpen /.netlify/functions/shipment-store on your Netlify site to confirm the function is deployed.`);
         }
       }
     }
@@ -1913,8 +1913,12 @@
         })
       });
       if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text || `Shared save failed with ${response.status}`);
+        let message = await response.text();
+        try {
+          const parsed = JSON.parse(message);
+          message = parsed.error || message;
+        } catch {}
+        throw new Error(`HTTP ${response.status}: ${message || "Shared save failed"}`);
       }
     }
 
