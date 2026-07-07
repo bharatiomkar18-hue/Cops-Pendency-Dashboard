@@ -5,6 +5,13 @@ const STORE_NAME = "cops-pendency-dashboard";
 const STORE_KEY = "latest-shipment-db";
 const DEFAULT_ADMIN_PASSWORD_HASH = "231fb98687ed0272c3ed11c61ec1515b7b50789e25e62a1fa86e40bda7a2fd0d";
 
+function getBlobStore() {
+  const siteID = process.env.COPS_NETLIFY_SITE_ID || process.env.NETLIFY_SITE_ID || process.env.SITE_ID;
+  const token = process.env.COPS_NETLIFY_TOKEN || process.env.NETLIFY_BLOBS_TOKEN || process.env.NETLIFY_AUTH_TOKEN;
+  if (siteID && token) return getStore(STORE_NAME, { siteID, token });
+  return getStore(STORE_NAME);
+}
+
 function json(statusCode, body) {
   return {
     statusCode,
@@ -32,7 +39,7 @@ exports.handler = async function handler(event) {
       return { statusCode: 204, headers: { "Cache-Control": "no-store, max-age=0" }, body: "" };
     }
 
-    const store = getStore(STORE_NAME);
+    const store = getBlobStore();
 
     if (event.httpMethod === "GET") {
       const record = await store.get(STORE_KEY, { type: "json" });
@@ -71,7 +78,8 @@ exports.handler = async function handler(event) {
     console.error("shipment-store failed", err);
     return json(500, {
       error: "Shipment store function failed. Confirm @netlify/blobs installed and Netlify Functions are enabled.",
-      detail: err && err.message ? err.message : String(err)
+      detail: err && err.message ? err.message : String(err),
+      requiredEnvironmentVariables: ["COPS_NETLIFY_SITE_ID", "COPS_NETLIFY_TOKEN"]
     });
   }
 };
