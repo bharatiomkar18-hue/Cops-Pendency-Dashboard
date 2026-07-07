@@ -1,0 +1,8 @@
+{
+  "name": "cops-pendency-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@netlify/blobs": "^8.1.0"
+  }
+}
