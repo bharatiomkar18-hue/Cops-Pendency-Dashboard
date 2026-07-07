@@ -12,10 +12,13 @@
 
 - `netlify/functions/shipment-store.js`
   - Netlify Function used by viewer mode to load the last stored shipment DB.
-  - Admin upload/append saves the latest DB here until the next admin upload/append.
+  - Admin upload/append commits the latest DB into GitHub as `cops_shared_store.json`.
 
 - `package.json`
-  - Adds the Netlify Blobs dependency required by the shared shipment DB store.
+  - Minimal package metadata for Netlify deployment.
+
+- `cops_shared_store.json`
+  - Shared DB placeholder. The Netlify Function updates this file after admin upload/append.
 
 - `cops_live_data.js`
   - Empty fallback live-data snapshot.
@@ -46,12 +49,12 @@ Reason:
 
 ## Important Shared-Data Behavior
 
-This version requires Netlify Functions and Netlify Blobs. Do not use a plain static drag-and-drop deploy for the final production site, because the viewer-wide store will not run there.
+This version requires Netlify Functions and a GitHub token with repository contents write access. Do not use a plain static drag-and-drop deploy for the final production site, because the viewer-wide store will not run there.
 
 What works now:
 
-- Admin uploads with `Replace Data`: shared DB is overwritten.
-- Admin uploads with `Append Data`: current loaded DB and new file are merged/deduped by `ID` / `AWB No`, then the merged DB is stored.
+- Admin uploads with `Replace Data`: shared DB is overwritten in `cops_shared_store.json`.
+- Admin uploads with `Append Data`: current loaded DB and new file are merged/deduped by `ID` / `AWB No`, then the merged DB is stored in `cops_shared_store.json`.
 - View-only users open or refresh the same production URL and the latest shared DB loads automatically.
 - Same admin browser/new tab also restores from browser storage if the shared function is unavailable.
 
@@ -72,8 +75,10 @@ Netlify will install `@netlify/blobs` from this folder's `package.json`.
 
 Optional environment variable:
 
+- `COPS_GITHUB_TOKEN`
+  - GitHub token with contents read/write access to this repo.
 - `COPS_ADMIN_PASSWORD_HASH`
-  - SHA-256 hash of the admin password.
+  - Optional SHA-256 hash of the admin password.
   - If not set, the bundled default password hash is used.
 
 ## Deployment Option B: Netlify CLI
