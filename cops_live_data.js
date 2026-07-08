@@ -1,2 +1,0 @@
-window.COPS_LIVE_SHIPMENT_NAME = "";
-window.COPS_LIVE_SHIPMENT_ROWS = [];
