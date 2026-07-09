@@ -80,6 +80,8 @@
 
     input[type="file"] { max-width: 290px; padding: 8px; }
     select, input { padding: 8px 10px; min-height: 38px; }
+    select[multiple] { min-height: 96px; padding: 6px; }
+    select[multiple] option { padding: 5px 6px; border-radius: 4px; }
     textarea { width: 100%; min-height: 78px; padding: 9px 10px; resize: vertical; }
 
     button {
@@ -260,6 +262,11 @@
     tr.row-watch td:first-child { border-left: 4px solid var(--amber); }
     tr.row-critical { background: #fff1f3; font-weight: 650; }
     tr.row-critical td:first-child { border-left: 5px solid var(--red); }
+    td.heat-age-1 { background: #fff7f8; }
+    td.heat-age-2 { background: #ffecef; }
+    td.heat-age-3 { background: #ffdce3; font-weight: 650; }
+    td.heat-age-4 { background: #ffc9d3; font-weight: 700; }
+    td.heat-age-5 { background: #ffb3c2; color: #8a1028; font-weight: 750; }
 
     .table-wrap {
       max-height: 460px;
@@ -447,12 +454,12 @@
     </div>
 
     <section class="toolbar">
-      <label><span>Product ID</span><select id="productFilter"></select></label>
-      <label><span>LM Territory</span><select id="territoryFilter"></select></label>
-      <label><span>LM Station</span><select id="lmFilter"></select></label>
-      <label><span>Stage</span><select id="stageFilter"></select></label>
-      <label><span>Direction</span><select id="directionFilter"></select></label>
-      <label><span>Aging</span><select id="agingFilter"></select></label>
+      <label><span>Product ID</span><select id="productFilter" multiple size="4"></select></label>
+      <label><span>LM Territory</span><select id="territoryFilter" multiple size="4"></select></label>
+      <label><span>LM Station</span><select id="lmFilter" multiple size="4"></select></label>
+      <label><span>Stage</span><select id="stageFilter" multiple size="4"></select></label>
+      <label><span>Direction</span><select id="directionFilter" multiple size="4"></select></label>
+      <label><span>Aging</span><select id="agingFilter" multiple size="4"></select></label>
       <button id="resetFilters">Reset</button>
     </section>
 
@@ -528,8 +535,18 @@
         <div class="panel-head"><div class="panel-title"><h2>Critical Aging Summary</h2><span class="subline">Network-arrived shipments aged more than 5 days, split by Forward and RTO</span></div><button class="export-view" data-export-table="criticalSummaryTable">Export Excel</button></div>
         <div class="table-wrap"><table id="criticalSummaryTable"></table></div>
       </div>
+      <div class="grid-2">
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title"><h2>Critical Hub Summary</h2><span class="subline">Hub-level >5 day pendency with stage and aging split</span></div><button class="export-view" data-export-table="criticalHubTable">Export Excel</button></div>
+          <div class="table-wrap"><table id="criticalHubTable"></table></div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div class="panel-title"><h2>Critical Territory Summary</h2><span class="subline">Territory-level >5 day pendency with stage and aging split</span></div><button class="export-view" data-export-table="criticalTerritoryTable">Export Excel</button></div>
+          <div class="table-wrap"><table id="criticalTerritoryTable"></table></div>
+        </div>
+      </div>
       <div class="panel">
-        <div class="panel-head"><div class="panel-title"><h2>Critical Aging Tracking IDs</h2><span class="subline">7+ days highlighted for RTO marking watch; 10+ days critical</span></div><button class="export-view" data-export-table="criticalDetailTable">Export Excel</button></div>
+        <div class="panel-head"><div class="panel-title"><h2 id="criticalDetailTitle">Critical Aging Tracking IDs</h2><span class="subline">7+ days highlighted for RTO marking watch; 10+ days critical</span></div><button class="export-view" data-export-table="criticalDetailTable">Export Excel</button></div>
         <div class="table-wrap"><table id="criticalDetailTable"></table></div>
       </div>
     </section>
@@ -604,7 +621,7 @@
             <tr><th>Promise Date View</th><td>Uses <b>Delivery Slot End Timestamp</b> as customer promise date and shows promise buckets. Rows with blank <b>Network Arrival Date</b> are excluded.</td></tr>
             <tr><th>Lane Counts</th><td><b>Manifested</b> in the lane view means non-terminal shipments only. <b>Pending</b> means manifested but <b>Network Arrival Date</b> is blank.</td></tr>
             <tr><th>Lane</th><td>Forward lane is <b>FM Station Name - LM Station Name</b>. RTO lane is <b>LM Station Name - FM Station Name</b>. Lane never uses current station.</td></tr>
-            <tr><th>Aging</th><td>Forward aging uses <b>Network Arrival Date</b>. RTO rows show both overall aging from <b>Network Arrival Date</b> and RTO aging from <b>RTO Intitate Date</b>.</td></tr>
+            <tr><th>Aging</th><td>Forward/RTO aging views use overall shipment aging, prioritising <b>Network Arrival Date</b> when present. Buckets are <b>&lt;=2, 3-5, 5-7, 7-10, 10-15, &gt;15 days</b>.</td></tr>
             <tr><th>Direction</th><td><b>Order Type = Forward</b> is forward pendency. <b>Order Type = RTO</b> is reverse pendency.</td></tr>
             <tr><th>COD Pendency</th><td>COD rows are tracked only when <b>Payment Method = cod/cash</b>. Delivered means cash pending at hub; COD Deposited means deposited in portal; COD Reconciled means COPS/payment verified; Pending COD Clearance and Pending COD Verification remain COPS/payment action buckets.</td></tr>
             <tr><th>Access Rules</th><td>Viewer users can see pendency only. Admin users can upload files, open the COPS control panel, and update RCA/description at TID level.</td></tr>
@@ -627,7 +644,8 @@
       isAdmin: false,
       adminPassword: "",
       tableExports: {},
-      summaryDrill: "all"
+      summaryDrill: "all",
+      criticalDrill: "all"
     };
 
     const requiredHeaders = [
@@ -641,11 +659,12 @@
     const terminalUberStatuses = new Set(["Delivered", "RTO-Delivered"]);
     const codStatuses = new Set(["Delivered", "Cash Collected", "Cash Handover", "COD Deposited", "COD Reconciled", "Pending COD Clearance", "Pending COD Verification", "Pending COD Clearance", "Pending COD Verification"]);
     const rtoStatusHints = new Set(["Ready For Return", "Rejected From Field"]);
+    const overallAgingBuckets = ["<=2 days", "3-5 days", "5-7 days", "7-10 days", "10-15 days", ">15 days"];
 
     const els = Object.fromEntries([
       "fileInput", "fileMeta", "emptyState", "metrics", "summaryDrillPanel", "summaryDrillTitle", "summaryDrillTable", "stageTable", "hubTable", "queueTable", "hubSummaryTable",
       "laneTable", "promiseLaneTable", "forwardAgingTable", "reverseAgingTable", "territoryAgingSummaryTable", "hubAgingSummaryTable", "agingDetailTable", "codMetrics",
-      "criticalMetrics", "criticalSummaryTable", "criticalDetailTable",
+      "criticalMetrics", "criticalSummaryTable", "criticalHubTable", "criticalTerritoryTable", "criticalDetailTitle", "criticalDetailTable",
       "codBucketTable", "codHubTable", "codDetailTable", "copsTable", "caseDetail",
       "selectedAwb", "rcaType", "facilityWrap", "facilityId", "techWrap", "techDesc",
       "copsRemark", "ownerName", "followupStatus", "formError", "saveRcaBtn",
@@ -678,11 +697,14 @@
     });
     els.viewerBtn.addEventListener("click", viewerMode);
     els.resetFilters.addEventListener("click", () => {
-      ["productFilter", "territoryFilter", "lmFilter", "stageFilter", "directionFilter", "agingFilter"].forEach(id => els[id].value = "All");
+      ["productFilter", "territoryFilter", "lmFilter", "stageFilter", "directionFilter", "agingFilter"].forEach(id => selectOnly(els[id], "All"));
       render();
     });
     ["productFilter", "territoryFilter", "lmFilter", "stageFilter", "directionFilter", "agingFilter"].forEach(id => {
-      els[id].addEventListener("change", render);
+      els[id].addEventListener("change", event => {
+        normalizeMultiSelect(event.target);
+        render();
+      });
     });
     els.rcaType.addEventListener("change", syncRcaRequirements);
     els.rcaSearch.addEventListener("input", renderCopsView);
@@ -700,6 +722,12 @@
       if (!card) return;
       state.summaryDrill = card.dataset.drill;
       renderSummaryDrilldown();
+    });
+    els.criticalMetrics.addEventListener("click", event => {
+      const card = event.target.closest("[data-drill]");
+      if (!card) return;
+      state.criticalDrill = card.dataset.drill;
+      renderCriticalAgingView();
     });
 
     initializeData();
@@ -883,7 +911,7 @@
         networkAgingDays,
         criticalBucket: criticalAgingBucket(networkAgingDays),
         overallAgingDays,
-        overallAgingBucket: agingBucket(overallAgingDays),
+        overallAgingBucket: overallAgingBucket(overallAgingDays),
         rtoAgingDays,
         rtoAgingBucket: rtoInitiate ? agingBucket(rtoAgingDays) : "",
         manifested,
@@ -964,19 +992,19 @@
     }
 
     function applyFilters(rows) {
-      const product = els.productFilter.value;
-      const territory = els.territoryFilter.value;
-      const lm = els.lmFilter.value;
-      const stage = els.stageFilter.value;
-      const direction = els.directionFilter.value;
-      const aging = els.agingFilter.value;
+      const product = selectedValues(els.productFilter);
+      const territory = selectedValues(els.territoryFilter);
+      const lm = selectedValues(els.lmFilter);
+      const stage = selectedValues(els.stageFilter);
+      const direction = selectedValues(els.directionFilter);
+      const aging = selectedValues(els.agingFilter);
       return rows.filter(r =>
-        (product === "All" || (r.productId || "Unmapped") === product) &&
-        (territory === "All" || r.lmTerritory === territory) &&
-        (lm === "All" || r.lm === lm) &&
-        (stage === "All" || r.stage === stage) &&
-        (direction === "All" || r.direction === direction) &&
-        (aging === "All" || r.agingBucket === aging)
+        matchesSelection(product, r.productId || "Unmapped") &&
+        matchesSelection(territory, r.lmTerritory || "Unmapped") &&
+        matchesSelection(lm, r.lm || "Unmapped") &&
+        matchesSelection(stage, r.stage) &&
+        matchesSelection(direction, r.direction) &&
+        matchesSelection(aging, r.overallAgingBucket)
       );
     }
 
@@ -986,7 +1014,7 @@
       fillSelect(els.lmFilter, ["All", ...unique(state.db.map(r => r.lm))]);
       fillSelect(els.stageFilter, ["All", "FM Pendency", "MM Pendency", "LM Pendency", "Short Received"]);
       fillSelect(els.directionFilter, ["All", "Forward", "Reverse"]);
-      fillSelect(els.agingFilter, ["All", "<=2 days", "3-5 days", ">5 days"]);
+      fillSelect(els.agingFilter, ["All", ...overallAgingBuckets]);
     }
 
     function renderMetrics() {
@@ -1042,10 +1070,13 @@
         rows = state.filtered.filter(r => r.noScanBucket);
       } else if (state.summaryDrill === "cod") {
         title = "COD Action Rows";
+        const product = selectedValues(els.productFilter);
+        const territory = selectedValues(els.territoryFilter);
+        const lm = selectedValues(els.lmFilter);
         const codRows = state.cod.filter(r =>
-          (els.productFilter.value === "All" || (r.productId || "Unmapped") === els.productFilter.value) &&
-          (els.territoryFilter.value === "All" || r.lmTerritory === els.territoryFilter.value) &&
-          (els.lmFilter.value === "All" || r.lm === els.lmFilter.value)
+          matchesSelection(product, r.productId || "Unmapped") &&
+          matchesSelection(territory, r.lmTerritory || "Unmapped") &&
+          matchesSelection(lm, r.lm || "Unmapped")
         );
         els.summaryDrillTitle.textContent = title;
         renderTable(els.summaryDrillTable, codRows.slice(0, 500), {
@@ -1122,38 +1153,38 @@
     }
 
     function renderAgingView() {
-      const forward = groupRowsWithAging(state.filtered.filter(r => r.direction === "Forward"), ["stage"], "overallAgingBucket");
-      const reverse = groupReverseAging(state.filtered.filter(r => r.direction === "Reverse"));
+      const forward = groupOverallAgingByStage(state.filtered.filter(r => r.direction === "Forward"));
+      const reverse = groupOverallAgingByStage(state.filtered.filter(r => r.direction === "Reverse"));
       const forwardCfg = {
         name: "forward_pendency_aging",
-        headers: ["Stage", "Total", "<=2", "3-5", ">5"],
-        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, r.le2, r.d3to5, r.gt5],
-        exportRow: r => [r.stage, r.count, r.le2, r.d3to5, r.gt5]
+        headers: ["Stage", "Total", ...overallAgingBuckets],
+        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)],
+        exportRow: r => [r.stage, r.count, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)]
       };
       renderTable(els.forwardAgingTable, forward, forwardCfg);
       renderTable(els.reverseAgingTable, reverse, {
         name: "reverse_pendency_aging",
-        headers: ["Stage", "Total", "Overall <=2", "Overall 3-5", "Overall >5", "RTO <=2", "RTO 3-5", "RTO >5", "RTO Date Blank"],
-        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, r.overallLe2, r.overall3to5, r.overallGt5, r.rtoLe2, r.rto3to5, r.rtoGt5, r.rtoBlank],
-        exportRow: r => [r.stage, r.count, r.overallLe2, r.overall3to5, r.overallGt5, r.rtoLe2, r.rto3to5, r.rtoGt5, r.rtoBlank]
+        headers: ["Stage", "Total", ...overallAgingBuckets],
+        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)],
+        exportRow: r => [r.stage, r.count, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)]
       });
       renderTable(els.territoryAgingSummaryTable, groupForwardRtoAgingSummary(state.filtered, r => r.lmTerritory || "Unmapped"), {
         name: "territory_level_forward_rto_aging",
-        headers: ["LM Territory", "Total", "Forward", "F <=2", "F 3-5", "F >5", "RTO", "RTO Overall <=2", "RTO Overall 3-5", "RTO Overall >5", "RTO Age <=2", "RTO Age 3-5", "RTO Age >5", "RTO Age Blank"],
-        row: r => [r.label, r.total, r.forward, r.fLe2, r.f3to5, r.fGt5, r.rto, r.rtoOverallLe2, r.rtoOverall3to5, r.rtoOverallGt5, r.rtoLe2, r.rto3to5, r.rtoGt5, r.rtoBlank],
-        exportRow: r => [r.label, r.total, r.forward, r.fLe2, r.f3to5, r.fGt5, r.rto, r.rtoOverallLe2, r.rtoOverall3to5, r.rtoOverallGt5, r.rtoLe2, r.rto3to5, r.rtoGt5, r.rtoBlank]
+        headers: ["LM Territory", "Total", "Forward", ...overallAgingBuckets.map(b => `F ${b}`), "RTO", ...overallAgingBuckets.map(b => `RTO ${b}`)],
+        row: r => [r.label, r.total, r.forward, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)],
+        exportRow: r => [r.label, r.total, r.forward, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)]
       });
       renderTable(els.hubAgingSummaryTable, groupForwardRtoAgingSummary(state.filtered, r => r.current || r.lm || "No current hub"), {
         name: "hub_level_forward_rto_aging",
-        headers: ["Hub / Current Owner", "Total", "Forward", "F <=2", "F 3-5", "F >5", "RTO", "RTO Overall <=2", "RTO Overall 3-5", "RTO Overall >5", "RTO Age <=2", "RTO Age 3-5", "RTO Age >5", "RTO Age Blank"],
-        row: r => [r.label, r.total, r.forward, r.fLe2, r.f3to5, r.fGt5, r.rto, r.rtoOverallLe2, r.rtoOverall3to5, r.rtoOverallGt5, r.rtoLe2, r.rto3to5, r.rtoGt5, r.rtoBlank],
-        exportRow: r => [r.label, r.total, r.forward, r.fLe2, r.f3to5, r.fGt5, r.rto, r.rtoOverallLe2, r.rtoOverall3to5, r.rtoOverallGt5, r.rtoLe2, r.rto3to5, r.rtoGt5, r.rtoBlank]
+        headers: ["Hub / Current Owner", "Total", "Forward", ...overallAgingBuckets.map(b => `F ${b}`), "RTO", ...overallAgingBuckets.map(b => `RTO ${b}`)],
+        row: r => [r.label, r.total, r.forward, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)],
+        exportRow: r => [r.label, r.total, r.forward, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)]
       });
       renderTable(els.agingDetailTable, state.filtered.slice(0, 500), {
         name: "aging_detail",
-        headers: ["AWB", "Product ID", "Direction", "Stage", "Stage Age", "Overall Age", "RTO Age", "LM", "Current", "Network Arrival", "RTO Initiated"],
-        row: r => [r.awb, r.productId, r.direction, pill(r.stage, r.stageClass), `${r.agingDays}d`, `${r.overallAgingDays}d`, r.rtoAgingDays === "" ? "-" : `${r.rtoAgingDays}d`, r.lm, r.current || "-", fmtDate(r.networkArrival), fmtDate(r.rtoInitiate)],
-        exportRow: r => [r.awb, r.productId, r.direction, r.stage, r.agingDays, r.overallAgingDays, r.rtoAgingDays, r.lm, r.current || "-", fmtDate(r.networkArrival), fmtDate(r.rtoInitiate)],
+        headers: ["AWB", "Product ID", "Direction", "Stage", "Stage Age", "Overall Age", "Overall Bucket", "LM", "Current", "Network Arrival"],
+        row: r => [r.awb, r.productId, r.direction, pill(r.stage, r.stageClass), `${r.agingDays}d`, `${r.overallAgingDays}d`, r.overallAgingBucket, r.lm, r.current || "-", fmtDate(r.networkArrival)],
+        exportRow: r => [r.awb, r.productId, r.direction, r.stage, r.agingDays, r.overallAgingDays, r.overallAgingBucket, r.lm, r.current || "-", fmtDate(r.networkArrival)],
         rowClass: r => `row-${r.stageClass}`
       });
     }
@@ -1166,14 +1197,16 @@
       const reverse = criticalRows.filter(r => r.direction === "Reverse");
       const watch = criticalRows.filter(r => r.criticalBucket === "RTO Marking Watch").length;
       const critical = criticalRows.filter(r => r.criticalBucket === "Critical 10+ Days").length;
+      const detailRows = filterCriticalDrillRows(criticalRows);
 
       els.criticalMetrics.innerHTML = [
-        metric("Critical >5 Days", criticalRows.length, "Network arrival aging"),
-        metric("Forward", forward.length, "Forward shipments >5 days"),
-        metric("RTO", reverse.length, "RTO shipments >5 days"),
-        metric("7-9 Day Watch", watch, "Forward shipments to monitor for RTO marking", "amber"),
-        metric("10+ Day Critical", critical, "Strong escalation bucket", "red")
+        metric("Critical >5 Days", criticalRows.length, "Network arrival aging", "blue", "all"),
+        metric("Forward", forward.length, "Forward shipments >5 days", "teal", "forward"),
+        metric("RTO", reverse.length, "RTO shipments >5 days", "violet", "reverse"),
+        metric("7-9 Day Watch", watch, "Forward shipments to monitor for RTO marking", "amber", "watch"),
+        metric("10+ Day Critical", critical, "Strong escalation bucket", "red", "critical")
       ].join("");
+      els.criticalDetailTitle.textContent = criticalDrillTitle(state.criticalDrill);
 
       renderTable(els.criticalSummaryTable, groupCriticalAging(criticalRows), {
         name: "critical_aging_summary",
@@ -1181,8 +1214,20 @@
         row: r => [pill(r.direction, r.direction === "Reverse" ? "reverse" : "forward"), pill(r.bucket, criticalClassFor(r.bucket)), pill(r.stage, stageClassFor(r.stage)), r.count, r.d6, r.d7to9, r.d10plus],
         exportRow: r => [r.direction, r.bucket, r.stage, r.count, r.d6, r.d7to9, r.d10plus]
       });
+      renderTable(els.criticalHubTable, groupCriticalLocationAging(criticalRows, r => r.current || r.lm || "No current hub"), {
+        name: "critical_hub_summary",
+        headers: ["Hub / Current Owner", "Total", "Forward", "RTO", "FM", "MM", "LM", "Short Received", "5-7", "7-10", "10-15", ">15"],
+        row: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus],
+        exportRow: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus]
+      });
+      renderTable(els.criticalTerritoryTable, groupCriticalLocationAging(criticalRows, r => r.lmTerritory || "Unmapped"), {
+        name: "critical_territory_summary",
+        headers: ["LM Territory", "Total", "Forward", "RTO", "FM", "MM", "LM", "Short Received", "5-7", "7-10", "10-15", ">15"],
+        row: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus],
+        exportRow: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus]
+      });
 
-      renderTable(els.criticalDetailTable, criticalRows.slice(0, 750), {
+      renderTable(els.criticalDetailTable, detailRows.slice(0, 750), {
         name: "critical_aging_tracking_ids",
         headers: ["AWB", "Product ID", "Direction", "Critical Bucket", "Network Age", "Stage", "LM", "Current", "Status", "Network Arrival", "RTO Initiated", "Lane"],
         row: r => [r.awb, r.productId, r.direction, pill(r.criticalBucket, criticalClassFor(r.criticalBucket)), `${r.networkAgingDays}d`, pill(r.stage, r.stageClass), r.lm, r.current || "-", r.status, fmtDate(r.networkArrival), fmtDate(r.rtoInitiate), r.lane],
@@ -1192,10 +1237,13 @@
     }
 
     function renderCodView() {
+      const product = selectedValues(els.productFilter);
+      const territory = selectedValues(els.territoryFilter);
+      const lm = selectedValues(els.lmFilter);
       const codFiltered = state.cod.filter(r =>
-        (els.productFilter.value === "All" || (r.productId || "Unmapped") === els.productFilter.value) &&
-        (els.territoryFilter.value === "All" || r.lmTerritory === els.territoryFilter.value) &&
-        (els.lmFilter.value === "All" || r.lm === els.lmFilter.value)
+        matchesSelection(product, r.productId || "Unmapped") &&
+        matchesSelection(territory, r.lmTerritory || "Unmapped") &&
+        matchesSelection(lm, r.lm || "Unmapped")
       );
       const cashPending = codFiltered.filter(r => r.bucket === "Cash Pending at Hub").reduce((s, r) => s + r.amount, 0);
       const copsPending = codFiltered.filter(r => r.bucket === "COPS Payment Pending").length;
@@ -1231,11 +1279,12 @@
 
     function renderCopsView() {
       if (!state.isAdmin) return;
+      const product = selectedValues(els.productFilter);
       const actionRows = [
         ...state.filtered.filter(r => r.rcaEligible),
         ...state.cod.filter(c =>
           c.bucket !== "COPS Verified" &&
-          (els.productFilter.value === "All" || (c.productId || "Unmapped") === els.productFilter.value)
+          matchesSelection(product, c.productId || "Unmapped")
         ).map(codToActionRow)
       ];
       const byId = new Map();
@@ -1452,7 +1501,7 @@
           built ? built.agingDays : "",
           built ? built.agingBucket : "",
           overallDays,
-          agingBucket(overallDays),
+          overallAgingBucket(overallDays),
           rtoDays,
           rtoInitiate ? agingBucket(rtoDays) : "",
           fmtDate(deliverySlot),
@@ -1675,6 +1724,20 @@
       return Array.from(map.values()).sort((a, b) => b.count - a.count);
     }
 
+    function groupOverallAgingByStage(rows) {
+      const map = new Map();
+      rows.forEach(r => {
+        const stage = r.stage || "Unmapped";
+        if (!map.has(stage)) {
+          map.set(stage, { stage, count: 0, buckets: emptyOverallBuckets() });
+        }
+        const a = map.get(stage);
+        a.count += 1;
+        addOverallBucket(a.buckets, r.overallAgingBucket);
+      });
+      return Array.from(map.values()).sort((a, b) => b.count - a.count);
+    }
+
     function groupReverseAging(rows) {
       const map = new Map();
       rows.forEach(r => {
@@ -1704,36 +1767,56 @@
             label,
             total: 0,
             forward: 0,
-            fLe2: 0,
-            f3to5: 0,
-            fGt5: 0,
+            forwardBuckets: emptyOverallBuckets(),
             rto: 0,
-            rtoOverallLe2: 0,
-            rtoOverall3to5: 0,
-            rtoOverallGt5: 0,
-            rtoLe2: 0,
-            rto3to5: 0,
-            rtoGt5: 0,
-            rtoBlank: 0
+            rtoBuckets: emptyOverallBuckets()
           });
         }
         const a = map.get(label);
         a.total += 1;
         if (r.direction === "Forward") {
           a.forward += 1;
-          if (r.overallAgingBucket === "<=2 days") a.fLe2 += 1;
-          if (r.overallAgingBucket === "3-5 days") a.f3to5 += 1;
-          if (r.overallAgingBucket === ">5 days") a.fGt5 += 1;
+          addOverallBucket(a.forwardBuckets, r.overallAgingBucket);
         } else if (r.direction === "Reverse") {
           a.rto += 1;
-          if (r.overallAgingBucket === "<=2 days") a.rtoOverallLe2 += 1;
-          if (r.overallAgingBucket === "3-5 days") a.rtoOverall3to5 += 1;
-          if (r.overallAgingBucket === ">5 days") a.rtoOverallGt5 += 1;
-          if (!r.rtoAgingBucket) a.rtoBlank += 1;
-          if (r.rtoAgingBucket === "<=2 days") a.rtoLe2 += 1;
-          if (r.rtoAgingBucket === "3-5 days") a.rto3to5 += 1;
-          if (r.rtoAgingBucket === ">5 days") a.rtoGt5 += 1;
+          addOverallBucket(a.rtoBuckets, r.overallAgingBucket);
         }
+      });
+      return Array.from(map.values()).sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
+    }
+
+    function groupCriticalLocationAging(rows, labelFn) {
+      const map = new Map();
+      rows.forEach(r => {
+        const label = labelFn(r) || "Unmapped";
+        if (!map.has(label)) {
+          map.set(label, {
+            label,
+            total: 0,
+            forward: 0,
+            reverse: 0,
+            fm: 0,
+            mm: 0,
+            lm: 0,
+            short: 0,
+            b5to7: 0,
+            b7to10: 0,
+            b10to15: 0,
+            b15plus: 0
+          });
+        }
+        const a = map.get(label);
+        a.total += 1;
+        if (r.direction === "Forward") a.forward += 1;
+        if (r.direction === "Reverse") a.reverse += 1;
+        if (r.stage === "FM Pendency") a.fm += 1;
+        if (r.stage === "MM Pendency") a.mm += 1;
+        if (r.stage === "LM Pendency") a.lm += 1;
+        if (r.stage === "Short Received") a.short += 1;
+        if (r.networkAgingDays > 5 && r.networkAgingDays <= 7) a.b5to7 += 1;
+        else if (r.networkAgingDays > 7 && r.networkAgingDays <= 10) a.b7to10 += 1;
+        else if (r.networkAgingDays > 10 && r.networkAgingDays <= 15) a.b10to15 += 1;
+        else if (r.networkAgingDays > 15) a.b15plus += 1;
       });
       return Array.from(map.values()).sort((a, b) => b.total - a.total || a.label.localeCompare(b.label));
     }
@@ -1774,15 +1857,15 @@
     }
 
     function applyLaneManifestFilters(rows) {
-      const product = els.productFilter.value;
-      const territory = els.territoryFilter.value;
-      const lm = els.lmFilter.value;
-      const direction = els.directionFilter.value;
+      const product = selectedValues(els.productFilter);
+      const territory = selectedValues(els.territoryFilter);
+      const lm = selectedValues(els.lmFilter);
+      const direction = selectedValues(els.directionFilter);
       return rows.filter(r =>
-        (product === "All" || (r.productId || "Unmapped") === product) &&
-        (territory === "All" || r.lmTerritory === territory) &&
-        (lm === "All" || r.lm === lm) &&
-        (direction === "All" || r.direction === direction)
+        matchesSelection(product, r.productId || "Unmapped") &&
+        matchesSelection(territory, r.lmTerritory || "Unmapped") &&
+        matchesSelection(lm, r.lm || "Unmapped") &&
+        matchesSelection(direction, r.direction)
       );
     }
 
@@ -1872,9 +1955,28 @@
         rows: rows.map(r => (cfg.exportRow ? cfg.exportRow(r) : cfg.row(r).map(stripHtml)))
       };
       const body = rows.length
-        ? rows.map(r => `<tr class="${cfg.rowClass ? escapeHtml(cfg.rowClass(r)) : ""}">${cfg.row(r).map(v => `<td>${v == null ? "" : v}</td>`).join("")}</tr>`).join("")
+        ? rows.map(r => {
+          const cells = cfg.row(r);
+          return `<tr class="${cfg.rowClass ? escapeHtml(cfg.rowClass(r)) : ""}">${cells.map((v, index) => {
+            const heat = cfg.heatmap === false ? "" : agingHeatClass(cfg.headers[index], v);
+            return `<td class="${escapeHtml(heat)}">${v == null ? "" : v}</td>`;
+          }).join("")}</tr>`;
+        }).join("")
         : `<tr><td colspan="${cfg.headers.length}">No records for current filter.</td></tr>`;
       table.innerHTML = `<thead><tr>${cfg.headers.map(h => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead><tbody>${body}</tbody>`;
+    }
+
+    function agingHeatClass(header, value) {
+      const plainValue = stripHtml(value);
+      const count = Number(String(plainValue).replace(/,/g, "").trim());
+      if (!Number.isFinite(count) || count <= 0) return "";
+      const h = String(header || "").toLowerCase();
+      if (/>15|15\+/.test(h)) return "heat-age-5";
+      if (/10\+|10\s*-\s*15/.test(h)) return "heat-age-4";
+      if (/7\s*-\s*10|7\s*-\s*9|>5/.test(h)) return "heat-age-3";
+      if (/5\s*-\s*7|6\s*days?/.test(h)) return "heat-age-2";
+      if (/<=?\s*2|3\s*-\s*5/.test(h)) return "heat-age-1";
+      return "";
     }
 
     function metric(label, value, hint, tone = "blue", drill = "") {
@@ -1898,9 +2000,41 @@
     }
 
     function fillSelect(select, values) {
-      const current = select.value || "All";
+      const current = selectedValues(select);
       select.innerHTML = values.map(v => `<option>${escapeHtml(v)}</option>`).join("");
-      select.value = values.includes(current) ? current : "All";
+      const next = current.filter(v => values.includes(v));
+      const selected = next.length ? next : ["All"];
+      Array.from(select.options).forEach(option => {
+        option.selected = selected.includes(option.value);
+      });
+    }
+
+    function selectedValues(select) {
+      const values = Array.from(select.selectedOptions || []).map(option => option.value);
+      return values.length ? values : ["All"];
+    }
+
+    function matchesSelection(selection, value) {
+      return selection.includes("All") || selection.includes(value || "Unmapped");
+    }
+
+    function selectOnly(select, value) {
+      Array.from(select.options).forEach(option => {
+        option.selected = option.value === value;
+      });
+    }
+
+    function normalizeMultiSelect(select) {
+      const selected = Array.from(select.selectedOptions || []).map(option => option.value);
+      if (!selected.length) {
+        selectOnly(select, "All");
+        return;
+      }
+      if (selected.length > 1 && selected.includes("All")) {
+        Array.from(select.options).forEach(option => {
+          if (option.value === "All") option.selected = false;
+        });
+      }
     }
 
     function inferReportDate(rows) {
@@ -1948,6 +2082,23 @@
       return ">5 days";
     }
 
+    function overallAgingBucket(days) {
+      if (days <= 2) return "<=2 days";
+      if (days <= 5) return "3-5 days";
+      if (days <= 7) return "5-7 days";
+      if (days <= 10) return "7-10 days";
+      if (days <= 15) return "10-15 days";
+      return ">15 days";
+    }
+
+    function emptyOverallBuckets() {
+      return Object.fromEntries(overallAgingBuckets.map(bucket => [bucket, 0]));
+    }
+
+    function addOverallBucket(bucketCounts, bucket) {
+      if (Object.prototype.hasOwnProperty.call(bucketCounts, bucket)) bucketCounts[bucket] += 1;
+    }
+
     function criticalAgingBucket(days) {
       if (days === "" || days == null || Number.isNaN(Number(days))) return "";
       if (days >= 10) return "Critical 10+ Days";
@@ -1960,6 +2111,22 @@
       if (bucket === "Critical 10+ Days") return "critical";
       if (bucket === "RTO Marking Watch") return "watch";
       return "amber";
+    }
+
+    function filterCriticalDrillRows(rows) {
+      if (state.criticalDrill === "forward") return rows.filter(r => r.direction === "Forward");
+      if (state.criticalDrill === "reverse") return rows.filter(r => r.direction === "Reverse");
+      if (state.criticalDrill === "watch") return rows.filter(r => r.criticalBucket === "RTO Marking Watch");
+      if (state.criticalDrill === "critical") return rows.filter(r => r.criticalBucket === "Critical 10+ Days");
+      return rows;
+    }
+
+    function criticalDrillTitle(drill) {
+      if (drill === "forward") return "Critical Forward Tracking IDs";
+      if (drill === "reverse") return "Critical RTO Tracking IDs";
+      if (drill === "watch") return "7-9 Day Watch Tracking IDs";
+      if (drill === "critical") return "10+ Day Critical Tracking IDs";
+      return "Critical Aging Tracking IDs";
     }
 
     function codAgingBucket(days) {
