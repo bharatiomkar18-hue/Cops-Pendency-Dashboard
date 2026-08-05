@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -257,6 +257,8 @@
     tr.row-mm td:first-child { border-left: 4px solid var(--green); }
     tr.row-lm td:first-child { border-left: 4px solid var(--amber); }
     tr.row-short td:first-child { border-left: 4px solid var(--red); }
+    tr.row-transit td:first-child { border-left: 4px solid var(--teal); }
+    tr.row-reverseTransit td:first-child { border-left: 4px solid var(--violet); }
     tr.row-cod td:first-child { border-left: 4px solid var(--violet); }
     tr.row-watch { background: #fff8e8; }
     tr.row-watch td:first-child { border-left: 4px solid var(--amber); }
@@ -292,6 +294,8 @@
     .pill.mm { background: #ecfdf3; color: var(--green); border-color: #bbebcf; }
     .pill.lm { background: #fff4e6; color: var(--amber); border-color: #ffd7a1; }
     .pill.short { background: #fff1f3; color: var(--red); border-color: #ffc9d0; }
+    .pill.transit { background: #e7f7f6; color: var(--teal); border-color: #b8e1de; }
+    .pill.reverseTransit { background: #f3efff; color: var(--violet); border-color: #d8ccff; }
     .pill.cod { background: #f3efff; color: var(--violet); border-color: #d8ccff; }
     .pill.forward { background: #eaf2ff; color: var(--blue); border-color: #c8d8ff; }
     .pill.reverse { background: #fff1f3; color: var(--red); border-color: #ffc9d0; }
@@ -614,14 +618,15 @@
         <div class="panel-head"><h2>DB Classification Logic</h2><span class="subline">Current working logic for review</span></div>
         <table>
           <tbody>
-            <tr><th>FM Pendency</th><td>Shipment is manifested but <b>Network Arrival Date</b> is blank. This is pickup/FM pendency and is not eligible for MM/LM calculation yet.</td></tr>
-            <tr><th>MM Pendency</th><td><b>Network Arrival Date</b> is present, but <b>LM Arrival Time</b> is blank and transit aging is within 2 days.</td></tr>
-            <tr><th>Short Received</th><td><b>In Transit Time</b> exists, <b>LM Arrival Time</b> is blank, and aging is more than 2 days.</td></tr>
+            <tr><th>FM Pickup Pending</th><td><b>Manifested Date</b> is pickup request generation. If <b>Network Arrival Date</b> is blank, pickup is pending from the field.</td></tr>
+            <tr><th>Picked Up - Not In-Transit</th><td><b>Network Arrival Date</b> is present, but shipment is not yet in <b>In Vehicle Transit</b> and is not received at LM.</td></tr>
+            <tr><th>In-Transit Pendency</th><td><b>Status/Uber Status = In Vehicle Transit</b>. Forward and RTO are separated by <b>Order Type</b>.</td></tr>
+            <tr><th>Short Received</th><td><b>In Vehicle Transit</b> shipments where <b>In Transit Time</b> is aged more than 3 days.</td></tr>
             <tr><th>LM Pendency</th><td><b>Network Arrival Date</b> and <b>LM Arrival Time</b> are present, but shipment is not completed, COD completed, or RTO delivered.</td></tr>
             <tr><th>Promise Date View</th><td>Uses <b>Delivery Slot End Timestamp</b> as customer promise date and shows promise buckets. Rows with blank <b>Network Arrival Date</b> are excluded.</td></tr>
             <tr><th>Lane Counts</th><td><b>Manifested</b> in the lane view means non-terminal shipments only. <b>Pending</b> means manifested but <b>Network Arrival Date</b> is blank.</td></tr>
             <tr><th>Lane</th><td>Forward lane is <b>FM Station Name - LM Station Name</b>. RTO lane is <b>LM Station Name - FM Station Name</b>. Lane never uses current station.</td></tr>
-            <tr><th>Aging</th><td>Forward/RTO aging views use overall shipment aging, prioritising <b>Network Arrival Date</b> when present. Buckets are <b>&lt;=2, 3-5, 5-7, 7-10, 10-15, &gt;15 days</b>.</td></tr>
+            <tr><th>Aging</th><td>All shipment aging uses <b>Network Arrival Date</b>. Blank network-arrival rows remain visible as pickup pending without aging days.</td></tr>
             <tr><th>Direction</th><td><b>Order Type = Forward</b> is forward pendency. <b>Order Type = RTO</b> is reverse pendency.</td></tr>
             <tr><th>COD Pendency</th><td>COD rows are tracked only when <b>Payment Method = cod/cash</b>. Delivered means cash pending at hub; COD Deposited means deposited in portal; COD Reconciled means COPS/payment verified; Pending COD Clearance and Pending COD Verification remain COPS/payment action buckets.</td></tr>
             <tr><th>Access Rules</th><td>Viewer users can see pendency only. Admin users can upload files, open the COPS control panel, and update RCA/description at TID level.</td></tr>
@@ -655,11 +660,20 @@
       "Delivered Date", "Delivery Slot End Timestamp", "Uber Status"
     ];
 
-    const terminalShipmentStatuses = new Set(["Delivered", "COD Deposited", "COD Reconciled"]);
+    const excludedShipmentStatuses = new Set(["cancelled", "cash collected", "cash handover", "cod deposited", "cod reconciled", "delivered"]);
+    const terminalShipmentStatuses = new Set(["Delivered", "COD Deposited", "COD Reconciled", "Cash Collected", "Cash Handover", "Cancelled"]);
     const terminalUberStatuses = new Set(["Delivered", "RTO-Delivered"]);
-    const codStatuses = new Set(["Delivered", "Cash Collected", "Cash Handover", "COD Deposited", "COD Reconciled", "Pending COD Clearance", "Pending COD Verification", "Pending COD Clearance", "Pending COD Verification"]);
+    const codStatuses = new Set(["Pending COD Clearance", "Pending COD Verification"]);
     const rtoStatusHints = new Set(["Ready For Return", "Rejected From Field"]);
     const overallAgingBuckets = ["<=2 days", "3-5 days", "5-7 days", "7-10 days", "10-15 days", ">15 days"];
+    const sharedStoreColumns = [
+      "ID", "AWB No", "Order Reference", "Product ID", "Product Id", "ProductID", "Product", "Product Code", "Product Type",
+      "Manifested Date", "Network Arrival Date", "Order Type", "Payment Method", "Status", "Uber Status",
+      "First Mile Station", "FM Station Name", "FM Territory", "Last Mile Station", "LM Station Name", "LM Territory",
+      "Current Station Facility Name", "Current Station", "In Transit Time", "LM Arrival Time", "Delivered Date",
+      "Delivery Slot End Timestamp", "RTO Intitate Date", "modified", "Reason for Rejection",
+      "First Out On Road Date", "First Attempt Date", "First Attempt Reason", "Rejected", "Org Name", "Amount to Collect"
+    ];
 
     const els = Object.fromEntries([
       "fileInput", "fileMeta", "emptyState", "metrics", "summaryDrillPanel", "summaryDrillTitle", "summaryDrillTable", "stageTable", "hubTable", "queueTable", "hubSummaryTable",
@@ -782,7 +796,7 @@
         return;
       }
       const uploadedCount = rows.length;
-      rows = rows.filter(row => clean(row["Status"]).toLowerCase() !== "cancelled");
+      rows = rows.filter(row => !isExcludedShipmentStatus(row["Status"]));
       const cancelledRemoved = uploadedCount - rows.length;
 
       if (mode === "append" && state.raw.length) {
@@ -800,7 +814,7 @@
       state.cod = state.raw.map(buildCodRecord).filter(Boolean);
       populateFilters();
       const sourceLabel = options.sourceLabel || (mode === "append" ? "append + Tracking ID dedupe" : "replace");
-      const cancelledNote = cancelledRemoved ? ` | ${cancelledRemoved.toLocaleString()} cancelled removed` : "";
+      const cancelledNote = cancelledRemoved ? ` | ${cancelledRemoved.toLocaleString()} closed/cancelled removed` : "";
       els.fileMeta.textContent = `${fileName} | ${state.raw.length.toLocaleString()} active rows | ${sourceLabel}${cancelledNote} | report date ${fmtDate(state.reportDate)}`;
       els.emptyState.classList.add("hidden");
       els.exportBaseBtn.disabled = false;
@@ -819,7 +833,7 @@
       const uber = clean(row["Uber Status"]);
       const orderType = clean(row["Order Type"]) || (rtoStatusHints.has(status) ? "RTO" : "Forward");
       const direction = orderType.toLowerCase() === "rto" ? "Reverse" : "Forward";
-      const isTerminal = terminalShipmentStatuses.has(status) || terminalUberStatuses.has(uber);
+      const isTerminal = isExcludedShipmentStatus(status) || terminalUberStatuses.has(uber);
       if (isTerminal) return null;
 
       const lmArrival = parseDate(row["LM Arrival Time"]);
@@ -830,51 +844,46 @@
       const delivered = parseDate(row["Delivered Date"]);
       const deliverySlot = parseDate(row["Delivery Slot End Timestamp"]);
       const modified = parseDate(row["modified"]);
+      const inVehicleTransit = isInVehicleTransitStatus(status, uber);
+      const alreadyRtoMarked = direction === "Reverse" || Boolean(rtoInitiate) || /rto|return/i.test(`${status} ${uber} ${orderType}`);
 
-      let stage = "FM Pendency";
+      let stage = "FM Pickup Pending";
       let stageClass = "fm";
-      let actionBucket = "Pickup pending, not network arrived";
-      let ageStart = manifested || networkArrival || state.reportDate;
+      let actionBucket = "Pickup request generated, field pickup pending";
 
       if (!networkArrival) {
-        stage = "FM Pendency";
+        stage = "FM Pickup Pending";
         stageClass = "fm";
-        actionBucket = "Manifested, network arrival pending";
-        ageStart = manifested || state.reportDate;
+        actionBucket = "Pickup request generated, field pickup pending";
+      } else if (inVehicleTransit) {
+        const transitAge = inTransit ? daysBetween(inTransit, state.reportDate) : 0;
+        if (inTransit && transitAge > 3) {
+          stage = "Short Received";
+          stageClass = "short";
+          actionBucket = "In Vehicle Transit >3 days from In Transit Time";
+        } else {
+          stage = direction === "Reverse" ? "Reverse In-Transit Pendency" : "Forward In-Transit Pendency";
+          stageClass = direction === "Reverse" ? "reverseTransit" : "transit";
+          actionBucket = direction === "Reverse"
+            ? "RTO made in-transit, pending receipt at FM hub"
+            : "Forward made in-transit, pending receipt";
+        }
       } else if (lmArrival) {
         stage = "LM Pendency";
         stageClass = "lm";
         actionBucket = "Received at LM, closure pending";
-        ageStart = lmArrival;
-      } else if (inTransit) {
-        const transitAge = daysBetween(inTransit, state.reportDate);
-        if (transitAge > 2) {
-          stage = "Short Received";
-          stageClass = "short";
-          actionBucket = "In transit >2 days, LM not received";
-        } else {
-          stage = "MM Pendency";
-          stageClass = "mm";
-          actionBucket = "In transit, LM pending";
-        }
-        ageStart = inTransit;
       } else {
-        stage = "MM Pendency";
+        stage = "Picked Up - Not In-Transit";
         stageClass = "mm";
-        actionBucket = "Network arrived, LM pending";
-        ageStart = networkArrival;
+        actionBucket = "Picked up from field, in-transit scan pending";
       }
-
-      if (direction === "Forward") ageStart = networkArrival || manifested || state.reportDate;
-      if (direction === "Reverse" && rtoInitiate) ageStart = rtoInitiate;
 
       const id = clean(row["ID"]) || clean(row["AWB No"]);
       const rca = state.rcas[id] || state.rcas[clean(row["AWB No"])] || null;
       const fmName = clean(row["FM Station Name"]) || clean(row["First Mile Station"]) || "Unknown FM";
       const lmName = clean(row["LM Station Name"]) || clean(row["Last Mile Station"]) || "Unknown LM";
       const lane = direction === "Reverse" ? `${lmName} - ${fmName}` : `${fmName} - ${lmName}`;
-      const overallAgeStart = networkArrival || manifested || state.reportDate;
-      const overallAgingDays = Math.max(0, daysBetween(overallAgeStart, state.reportDate));
+      const overallAgingDays = networkArrival ? Math.max(0, daysBetween(networkArrival, state.reportDate)) : "";
       const networkAgingDays = networkArrival ? Math.max(0, daysBetween(networkArrival, state.reportDate)) : "";
       const rtoAgingDays = rtoInitiate ? Math.max(0, daysBetween(rtoInitiate, state.reportDate)) : "";
       const modifiedAgeHours = modified ? hoursBetween(modified, state.reportDate) : "";
@@ -883,7 +892,10 @@
       const rtoDepartFacilityBucket = direction === "Reverse" && status === "Depart Facility";
       const backdateOorBucket = status.toLowerCase() === "out on road" && modifiedAgeHours !== "" && modifiedAgeHours > 24;
       const noScanBucket = modifiedAgeHours !== "" && modifiedAgeHours > 24;
-      const rcaEligible = stage !== "FM Pendency";
+      const rcaEligible = stage !== "FM Pickup Pending";
+      const agingDays = networkArrival ? Math.max(0, daysBetween(networkArrival, state.reportDate)) : "";
+      const networkBucket = networkArrival ? agingBucket(agingDays) : "Network arrival blank";
+      const overallBucket = networkArrival ? overallAgingBucket(overallAgingDays) : "Network arrival blank";
 
       return {
         id,
@@ -906,12 +918,14 @@
         stage,
         stageClass,
         actionBucket,
-        agingDays: Math.max(0, daysBetween(ageStart, state.reportDate)),
-        agingBucket: agingBucket(Math.max(0, daysBetween(ageStart, state.reportDate))),
+        inVehicleTransit,
+        alreadyRtoMarked,
+        agingDays,
+        agingBucket: networkBucket,
         networkAgingDays,
-        criticalBucket: criticalAgingBucket(networkAgingDays),
+        criticalBucket: criticalAgingBucket(networkAgingDays, alreadyRtoMarked),
         overallAgingDays,
-        overallAgingBucket: overallAgingBucket(overallAgingDays),
+        overallAgingBucket: overallBucket,
         rtoAgingDays,
         rtoAgingBucket: rtoInitiate ? agingBucket(rtoAgingDays) : "",
         manifested,
@@ -946,7 +960,7 @@
       const amount = Number(row["Amount to Collect"] || 0);
       const status = clean(row["Status"]);
       const isCod = isCodCashPayment(payment);
-      if (!isCod || !codStatuses.has(status)) return null;
+      if (!isCod || isExcludedShipmentStatus(status) || !codStatuses.has(status)) return null;
 
       const delivered = parseDate(row["Delivered Date"]) || parseDate(row["modified"]) || state.reportDate;
       let bucket = "Other COD Action";
@@ -1012,9 +1026,9 @@
       fillSelect(els.productFilter, ["All", ...unique(state.db.map(r => r.productId || "Unmapped"))]);
       fillSelect(els.territoryFilter, ["All", ...unique(state.db.map(r => r.lmTerritory))]);
       fillSelect(els.lmFilter, ["All", ...unique(state.db.map(r => r.lm))]);
-      fillSelect(els.stageFilter, ["All", "FM Pendency", "MM Pendency", "LM Pendency", "Short Received"]);
+      fillSelect(els.stageFilter, ["All", ...unique(state.db.map(r => r.stage))]);
       fillSelect(els.directionFilter, ["All", "Forward", "Reverse"]);
-      fillSelect(els.agingFilter, ["All", ...overallAgingBuckets]);
+      fillSelect(els.agingFilter, ["All", "Network arrival blank", ...overallAgingBuckets]);
     }
 
     function renderMetrics() {
@@ -1023,9 +1037,11 @@
       const shortReceived = rows.filter(r => r.stage === "Short Received").length;
       const lmPendency = rows.filter(r => r.stage === "LM Pendency").length;
       const reverse = rows.filter(r => r.direction === "Reverse").length;
+      const inTransit = rows.filter(r => r.inVehicleTransit).length;
       els.metrics.innerHTML = [
         metric("Pending Shipments", rows.length, "All filtered action rows", "blue", "all"),
-        metric("Short Received", shortReceived, "In transit >2 days, LM not received", "red", "short"),
+        metric("Short Received", shortReceived, "In Vehicle Transit >3 days", "red", "short"),
+        metric("In-Transit Pendency", inTransit, "All active In Vehicle Transit rows", "teal", "inTransit"),
         metric("LM Pendency", lmPendency, "Received at LM, closure pending", "amber", "lm"),
         metric("Reverse Pendency", reverse, "RTO movement pending", "violet", "reverse"),
         metric("RCA Pending", openRca, "Controllable cases without RCA", "teal", "rca"),
@@ -1044,6 +1060,9 @@
       if (state.summaryDrill === "short") {
         title = "Short Received Pendency";
         rows = state.filtered.filter(r => r.stage === "Short Received");
+      } else if (state.summaryDrill === "inTransit") {
+        title = "In-Transit Pendency";
+        rows = state.filtered.filter(r => r.inVehicleTransit);
       } else if (state.summaryDrill === "lm") {
         title = "LM Pendency";
         rows = state.filtered.filter(r => r.stage === "LM Pendency");
@@ -1082,7 +1101,7 @@
         renderTable(els.summaryDrillTable, codRows.slice(0, 500), {
           name: "summary_cod_action_rows",
           headers: ["AWB", "Product ID", "Payment Method", "Hub", "Status", "COD Bucket", "Delivered Date", "Age", "Amount", "RCA"],
-          row: r => [r.awb, r.productId, r.payment, r.lm, r.status, pill(r.bucket, "cod"), fmtDate(r.delivered), `${r.agingDays}d`, money(r.amount), r.rcaStatus],
+          row: r => [r.awb, r.productId, r.payment, r.lm, r.status, pill(r.bucket, "cod"), fmtDate(r.delivered), fmtAge(r.agingDays), money(r.amount), r.rcaStatus],
           exportRow: r => [r.awb, r.productId, r.payment, r.lm, r.status, r.bucket, fmtDate(r.delivered), r.agingDays, r.amount, r.rcaStatus],
           rowClass: () => "row-cod"
         });
@@ -1093,7 +1112,7 @@
       renderTable(els.summaryDrillTable, rows.slice(0, 500), {
         name: `summary_${state.summaryDrill}_pendency`,
         headers: ["AWB", "Product ID", "Stage", "Direction", "Age", "Lane", "LM", "Current", "Status", "RCA"],
-        row: r => [r.awb, r.productId, pill(r.stage, r.stageClass), r.direction, `${r.agingDays}d`, r.lane, r.lm, r.current || "-", r.status, r.rcaStatus],
+        row: r => [r.awb, r.productId, pill(r.stage, r.stageClass), r.direction, fmtAge(r.agingDays), r.lane, r.lm, r.current || "-", r.status, r.rcaStatus],
         exportRow: r => [r.awb, r.productId, r.stage, r.direction, r.agingDays, r.lane, r.lm, r.current || "-", r.status, r.rcaStatus],
         rowClass: r => `row-${r.stageClass}`
       });
@@ -1102,53 +1121,53 @@
     function renderSummaryTables() {
       renderTable(els.stageTable, groupRows(state.filtered, ["stage"], ["count", "forward", "reverse", "le2", "d3to5", "gt5"]), {
         name: "stage_pendency",
-        headers: ["Stage", "Count", "Forward", "Reverse", "<=2", "3-5", ">5"],
-        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, r.forward, r.reverse, r.le2, r.d3to5, r.gt5],
-        exportRow: r => [r.stage, r.count, r.forward, r.reverse, r.le2, r.d3to5, r.gt5]
+        headers: ["Stage", "Count", "Forward", "Reverse", "Network Blank", ...overallAgingBuckets],
+        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, r.forward, r.reverse, r.networkBlank, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)],
+        exportRow: r => [r.stage, r.count, r.forward, r.reverse, r.networkBlank, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)]
       });
 
       const hubAgg = groupRows(state.filtered, ["current"], ["count", "short", "lm", "rcaPending"])
         .sort((a, b) => b.count - a.count).slice(0, 50);
       renderTable(els.hubTable, hubAgg, {
         name: "top_pending_hubs",
-        headers: ["Current Owner", "Pending", "Short Received", "LM", "RCA Pending"],
-        row: r => [r.current || "No current station", r.count, r.short, r.lm, r.rcaPending]
+        headers: ["Current Owner", "Pending", "In-Transit", "Short Received", "LM", "RCA Pending"],
+        row: r => [r.current || "No current station", r.count, r.transit, r.short, r.lm, r.rcaPending]
       });
 
       renderTable(els.queueTable, state.filtered.slice(0, 300), {
         name: "action_queue",
         headers: ["AWB", "Product ID", "Stage", "Age", "Direction", "Status", "Uber", "Lane", "Owner", "RCA"],
-        row: r => [r.awb, r.productId, pill(r.stage, r.stageClass), `${r.agingDays}d`, r.direction, r.status, r.uber, r.lane, r.current || r.lm, r.rcaStatus],
+        row: r => [r.awb, r.productId, pill(r.stage, r.stageClass), fmtAge(r.agingDays), r.direction, r.status, r.uber, r.lane, r.current || r.lm, r.rcaStatus],
         exportRow: r => [r.awb, r.productId, r.stage, r.agingDays, r.direction, r.status, r.uber, r.lane, r.current || r.lm, r.rcaStatus],
         rowClass: r => `row-${r.stageClass}`
       });
 
       renderTable(els.hubSummaryTable, buildHubSummary(state.filtered), {
         name: "hub_level_bucket_summary",
-        headers: ["Hub", "Total Pending", "FM", "MM", "LM", "Short Received", "Loss", "Wrong Facility", "RTO Depart Facility", "Backdate OOR", "No Scan", "RCA Pending"],
-        row: r => [r.hub, r.total, r.fm, r.mm, r.lm, r.short, r.loss, r.wrongFacility, r.rtoDepart, r.backdateOor, r.noScan, r.rcaPending],
-        exportRow: r => [r.hub, r.total, r.fm, r.mm, r.lm, r.short, r.loss, r.wrongFacility, r.rtoDepart, r.backdateOor, r.noScan, r.rcaPending]
+        headers: ["Hub", "Total Pending", "Pickup Pending", "Picked Up Not In-Transit", "Forward In-Transit", "Reverse In-Transit", "LM", "Short Received", "Loss", "Wrong Facility", "RTO Depart Facility", "Backdate OOR", "No Scan", "RCA Pending"],
+        row: r => [r.hub, r.total, r.fm, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short, r.loss, r.wrongFacility, r.rtoDepart, r.backdateOor, r.noScan, r.rcaPending],
+        exportRow: r => [r.hub, r.total, r.fm, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short, r.loss, r.wrongFacility, r.rtoDepart, r.backdateOor, r.noScan, r.rcaPending]
       });
     }
 
     function renderLaneView() {
       const manifestedRows = applyLaneManifestFilters(state.raw.map(buildManifestLaneRecord).filter(Boolean));
       const lanes = buildLaneAgg(manifestedRows, state.filtered)
-        .sort((a, b) => b.manifested - a.manifested);
+        .sort((a, b) => b.pickupRequests - a.pickupRequests);
       renderTable(els.laneTable, lanes, {
         name: "manifested_lane_view",
-        headers: ["Lane", "Lane Type", "Manifested", "Pending", "FM Pendency", "MM Pendency", "LM Pendency", "Short Received"],
-        row: r => [r.lane, pill(r.laneType, r.laneType === "RTO" ? "reverse" : "forward"), r.manifested, r.pending, r.fm, r.mm, r.lm, r.short],
-        exportRow: r => [r.lane, r.laneType, r.manifested, r.pending, r.fm, r.mm, r.lm, r.short]
+        headers: ["Lane", "Lane Type", "Pickup Requests", "Picked Up", "Pickup Pending", "Picked Up Not In-Transit", "Forward In-Transit", "Reverse In-Transit", "LM Pendency", "Short Received"],
+        row: r => [r.lane, pill(r.laneType, r.laneType === "RTO" ? "reverse" : "forward"), r.pickupRequests, r.pickedUp, r.pickupPending, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short],
+        exportRow: r => [r.lane, r.laneType, r.pickupRequests, r.pickedUp, r.pickupPending, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short]
       });
 
       const promiseRows = buildPromiseLaneAgg(state.filtered)
         .sort((a, b) => a.promiseSort - b.promiseSort || b.pending - a.pending);
       renderTable(els.promiseLaneTable, promiseRows, {
         name: "promise_date_pendency_by_lane",
-        headers: ["Delivery Slot End Date", "Promise Bucket", "Lane", "Lane Type", "Pending", "FM", "MM", "LM", "Short Received"],
-        row: r => [r.promiseDate, pill(r.promiseBucket, promiseClass(r.promiseBucket)), r.lane, pill(r.laneType, r.laneType === "RTO" ? "reverse" : "forward"), r.pending, r.fm, r.mm, r.lm, r.short],
-        exportRow: r => [r.promiseDate, r.promiseBucket, r.lane, r.laneType, r.pending, r.fm, r.mm, r.lm, r.short]
+        headers: ["Delivery Slot End Date", "Promise Bucket", "Lane", "Lane Type", "Picked Up", "Not In-Transit", "Forward In-Transit", "Reverse In-Transit", "LM", "Short Received"],
+        row: r => [r.promiseDate, pill(r.promiseBucket, promiseClass(r.promiseBucket)), r.lane, pill(r.laneType, r.laneType === "RTO" ? "reverse" : "forward"), r.pending, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short],
+        exportRow: r => [r.promiseDate, r.promiseBucket, r.lane, r.laneType, r.pending, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short]
       });
     }
 
@@ -1157,33 +1176,33 @@
       const reverse = groupOverallAgingByStage(state.filtered.filter(r => r.direction === "Reverse"));
       const forwardCfg = {
         name: "forward_pendency_aging",
-        headers: ["Stage", "Total", ...overallAgingBuckets],
-        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)],
-        exportRow: r => [r.stage, r.count, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)]
+        headers: ["Stage", "Total", "Network Blank", ...overallAgingBuckets],
+        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, r.networkBlank, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)],
+        exportRow: r => [r.stage, r.count, r.networkBlank, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)]
       };
       renderTable(els.forwardAgingTable, forward, forwardCfg);
       renderTable(els.reverseAgingTable, reverse, {
         name: "reverse_pendency_aging",
-        headers: ["Stage", "Total", ...overallAgingBuckets],
-        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)],
-        exportRow: r => [r.stage, r.count, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)]
+        headers: ["Stage", "Total", "Network Blank", ...overallAgingBuckets],
+        row: r => [pill(r.stage, stageClassFor(r.stage)), r.count, r.networkBlank, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)],
+        exportRow: r => [r.stage, r.count, r.networkBlank, ...overallAgingBuckets.map(bucket => r.buckets[bucket] || 0)]
       });
       renderTable(els.territoryAgingSummaryTable, groupForwardRtoAgingSummary(state.filtered, r => r.lmTerritory || "Unmapped"), {
         name: "territory_level_forward_rto_aging",
-        headers: ["LM Territory", "Total", "Forward", ...overallAgingBuckets.map(b => `F ${b}`), "RTO", ...overallAgingBuckets.map(b => `RTO ${b}`)],
-        row: r => [r.label, r.total, r.forward, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)],
-        exportRow: r => [r.label, r.total, r.forward, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)]
+        headers: ["LM Territory", "Total", "Forward", "F Network Blank", ...overallAgingBuckets.map(b => `F ${b}`), "RTO", "RTO Network Blank", ...overallAgingBuckets.map(b => `RTO ${b}`)],
+        row: r => [r.label, r.total, r.forward, r.forwardNetworkBlank, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, r.rtoNetworkBlank, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)],
+        exportRow: r => [r.label, r.total, r.forward, r.forwardNetworkBlank, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, r.rtoNetworkBlank, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)]
       });
       renderTable(els.hubAgingSummaryTable, groupForwardRtoAgingSummary(state.filtered, r => r.current || r.lm || "No current hub"), {
         name: "hub_level_forward_rto_aging",
-        headers: ["Hub / Current Owner", "Total", "Forward", ...overallAgingBuckets.map(b => `F ${b}`), "RTO", ...overallAgingBuckets.map(b => `RTO ${b}`)],
-        row: r => [r.label, r.total, r.forward, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)],
-        exportRow: r => [r.label, r.total, r.forward, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)]
+        headers: ["Hub / Current Owner", "Total", "Forward", "F Network Blank", ...overallAgingBuckets.map(b => `F ${b}`), "RTO", "RTO Network Blank", ...overallAgingBuckets.map(b => `RTO ${b}`)],
+        row: r => [r.label, r.total, r.forward, r.forwardNetworkBlank, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, r.rtoNetworkBlank, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)],
+        exportRow: r => [r.label, r.total, r.forward, r.forwardNetworkBlank, ...overallAgingBuckets.map(bucket => r.forwardBuckets[bucket] || 0), r.rto, r.rtoNetworkBlank, ...overallAgingBuckets.map(bucket => r.rtoBuckets[bucket] || 0)]
       });
       renderTable(els.agingDetailTable, state.filtered.slice(0, 500), {
         name: "aging_detail",
         headers: ["AWB", "Product ID", "Direction", "Stage", "Stage Age", "Overall Age", "Overall Bucket", "LM", "Current", "Network Arrival"],
-        row: r => [r.awb, r.productId, r.direction, pill(r.stage, r.stageClass), `${r.agingDays}d`, `${r.overallAgingDays}d`, r.overallAgingBucket, r.lm, r.current || "-", fmtDate(r.networkArrival)],
+        row: r => [r.awb, r.productId, r.direction, pill(r.stage, r.stageClass), fmtAge(r.agingDays), fmtAge(r.overallAgingDays), r.overallAgingBucket, r.lm, r.current || "-", fmtDate(r.networkArrival)],
         exportRow: r => [r.awb, r.productId, r.direction, r.stage, r.agingDays, r.overallAgingDays, r.overallAgingBucket, r.lm, r.current || "-", fmtDate(r.networkArrival)],
         rowClass: r => `row-${r.stageClass}`
       });
@@ -1195,6 +1214,8 @@
         .sort((a, b) => b.networkAgingDays - a.networkAgingDays);
       const forward = criticalRows.filter(r => r.direction === "Forward");
       const reverse = criticalRows.filter(r => r.direction === "Reverse");
+      const transit = criticalRows.filter(r => r.inVehicleTransit).length;
+      const lm = criticalRows.filter(r => r.stage === "LM Pendency").length;
       const watch = criticalRows.filter(r => r.criticalBucket === "RTO Marking Watch").length;
       const critical = criticalRows.filter(r => r.criticalBucket === "Critical 10+ Days").length;
       const detailRows = filterCriticalDrillRows(criticalRows);
@@ -1203,7 +1224,9 @@
         metric("Critical >5 Days", criticalRows.length, "Network arrival aging", "blue", "all"),
         metric("Forward", forward.length, "Forward shipments >5 days", "teal", "forward"),
         metric("RTO", reverse.length, "RTO shipments >5 days", "violet", "reverse"),
-        metric("7-9 Day Watch", watch, "Forward shipments to monitor for RTO marking", "amber", "watch"),
+        metric("LM Pendency", lm, "Actual LM pending >5 days", "amber", "lm"),
+        metric("In-Transit", transit, "Made in-transit, receipt pending", "teal", "inTransit"),
+        metric("7-9 Day Watch", watch, "Forward non-RTO shipments to monitor for RTO marking", "amber", "watch"),
         metric("10+ Day Critical", critical, "Strong escalation bucket", "red", "critical")
       ].join("");
       els.criticalDetailTitle.textContent = criticalDrillTitle(state.criticalDrill);
@@ -1216,21 +1239,21 @@
       });
       renderTable(els.criticalHubTable, groupCriticalLocationAging(criticalRows, r => r.current || r.lm || "No current hub"), {
         name: "critical_hub_summary",
-        headers: ["Hub / Current Owner", "Total", "Forward", "RTO", "FM", "MM", "LM", "Short Received", "5-7", "7-10", "10-15", ">15"],
-        row: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus],
-        exportRow: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus]
+        headers: ["Hub / Current Owner", "Total", "Forward", "RTO", "Pickup Pending", "Picked Up Not In-Transit", "Forward In-Transit", "Reverse In-Transit", "LM", "Short Received", "5-7", "7-10", "10-15", ">15"],
+        row: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus],
+        exportRow: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus]
       });
       renderTable(els.criticalTerritoryTable, groupCriticalLocationAging(criticalRows, r => r.lmTerritory || "Unmapped"), {
         name: "critical_territory_summary",
-        headers: ["LM Territory", "Total", "Forward", "RTO", "FM", "MM", "LM", "Short Received", "5-7", "7-10", "10-15", ">15"],
-        row: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus],
-        exportRow: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus]
+        headers: ["LM Territory", "Total", "Forward", "RTO", "Pickup Pending", "Picked Up Not In-Transit", "Forward In-Transit", "Reverse In-Transit", "LM", "Short Received", "5-7", "7-10", "10-15", ">15"],
+        row: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus],
+        exportRow: r => [r.label, r.total, r.forward, r.reverse, r.fm, r.mm, r.forwardTransit, r.reverseTransit, r.lm, r.short, r.b5to7, r.b7to10, r.b10to15, r.b15plus]
       });
 
       renderTable(els.criticalDetailTable, detailRows.slice(0, 750), {
         name: "critical_aging_tracking_ids",
         headers: ["AWB", "Product ID", "Direction", "Critical Bucket", "Network Age", "Stage", "LM", "Current", "Status", "Network Arrival", "RTO Initiated", "Lane"],
-        row: r => [r.awb, r.productId, r.direction, pill(r.criticalBucket, criticalClassFor(r.criticalBucket)), `${r.networkAgingDays}d`, pill(r.stage, r.stageClass), r.lm, r.current || "-", r.status, fmtDate(r.networkArrival), fmtDate(r.rtoInitiate), r.lane],
+        row: r => [r.awb, r.productId, r.direction, pill(r.criticalBucket, criticalClassFor(r.criticalBucket)), fmtAge(r.networkAgingDays), pill(r.stage, r.stageClass), r.lm, r.current || "-", r.status, fmtDate(r.networkArrival), fmtDate(r.rtoInitiate), r.lane],
         exportRow: r => [r.awb, r.productId, r.direction, r.criticalBucket, r.networkAgingDays, r.stage, r.lm, r.current || "-", r.status, fmtDate(r.networkArrival), fmtDate(r.rtoInitiate), r.lane],
         rowClass: r => r.networkAgingDays >= 10 ? "row-critical" : r.networkAgingDays >= 7 ? "row-watch" : `row-${r.stageClass}`
       });
@@ -1271,7 +1294,7 @@
       renderTable(els.codDetailTable, codFiltered.slice(0, 500), {
         name: "cod_action_queue",
         headers: ["AWB", "Product ID", "Payment Method", "Hub", "Status", "COD Bucket", "Delivered Date", "Age", "Amount", "RCA"],
-        row: r => [r.awb, r.productId, r.payment, r.lm, r.status, pill(r.bucket, "cod"), fmtDate(r.delivered), `${r.agingDays}d`, money(r.amount), r.rcaStatus],
+        row: r => [r.awb, r.productId, r.payment, r.lm, r.status, pill(r.bucket, "cod"), fmtDate(r.delivered), fmtAge(r.agingDays), money(r.amount), r.rcaStatus],
         exportRow: r => [r.awb, r.productId, r.payment, r.lm, r.status, r.bucket, fmtDate(r.delivered), r.agingDays, r.amount, r.rcaStatus],
         rowClass: () => "row-cod"
       });
@@ -1301,7 +1324,7 @@
       renderTable(els.copsTable, rows, {
         name: "cops_pending_case_list",
         headers: ["Tracking ID", "AWB", "Product ID", "Case", "Age", "LM", "Status", "RCA"],
-        row: r => [linkButton(r.id, r.id), r.awb, r.productId, pill(r.stage || r.actionBucket, r.stageClass || "cod"), `${r.agingDays}d`, r.lm, r.status, r.rcaStatus || "Not Updated"],
+        row: r => [linkButton(r.id, r.id), r.awb, r.productId, pill(r.stage || r.actionBucket, r.stageClass || "cod"), fmtAge(r.agingDays), r.lm, r.status, r.rcaStatus || "Not Updated"],
         exportRow: r => [r.id, r.awb, r.productId, r.stage || r.actionBucket, r.agingDays, r.lm, r.status, r.rcaStatus || "Not Updated"],
         rowClass: r => r.stageClass ? `row-${r.stageClass}` : "row-cod"
       });
@@ -1475,18 +1498,16 @@
         const uber = clean(row["Uber Status"]);
         const id = clean(row["ID"]) || clean(row["AWB No"]);
         const rca = state.rcas[id] || state.rcas[clean(row["AWB No"])] || {};
-        const terminal = terminalShipmentStatuses.has(status) || terminalUberStatuses.has(uber);
+        const terminal = isExcludedShipmentStatus(status) || terminalUberStatuses.has(uber);
         const orderType = clean(row["Order Type"]);
         const direction = orderType.toLowerCase() === "rto" ? "Reverse" : "Forward";
         const fm = clean(row["FM Station Name"]) || clean(row["First Mile Station"]) || "Unknown FM";
         const lm = clean(row["LM Station Name"]) || clean(row["Last Mile Station"]) || "Unknown LM";
         const lane = direction === "Reverse" ? `${lm} - ${fm}` : `${fm} - ${lm}`;
         const networkArrival = parseDate(row["Network Arrival Date"]);
-        const manifested = parseDate(row["Manifested Date"]);
         const rtoInitiate = parseDate(row["RTO Intitate Date"]);
         const deliverySlot = parseDate(row["Delivery Slot End Timestamp"]);
-        const overallAgeStart = networkArrival || manifested || state.reportDate;
-        const overallDays = Math.max(0, daysBetween(overallAgeStart, state.reportDate));
+        const overallDays = networkArrival ? Math.max(0, daysBetween(networkArrival, state.reportDate)) : "";
         const rtoDays = rtoInitiate ? Math.max(0, daysBetween(rtoInitiate, state.reportDate)) : "";
         const derived = [
           id,
@@ -1501,7 +1522,7 @@
           built ? built.agingDays : "",
           built ? built.agingBucket : "",
           overallDays,
-          overallAgingBucket(overallDays),
+          networkArrival ? overallAgingBucket(overallDays) : "Network arrival blank",
           rtoDays,
           rtoInitiate ? agingBucket(rtoDays) : "",
           fmtDate(deliverySlot),
@@ -1651,19 +1672,21 @@
         if (!map.has(key)) {
           const base = {};
           keys.forEach(k => base[k] = r[k] || "");
-          map.set(key, Object.assign(base, { count: 0, forward: 0, reverse: 0, le2: 0, d3to5: 0, gt5: 0, fm: 0, mm: 0, lm: 0, short: 0, rcaPending: 0 }));
+          map.set(key, Object.assign(base, { count: 0, forward: 0, reverse: 0, networkBlank: 0, buckets: emptyOverallBuckets(), fm: 0, mm: 0, lm: 0, short: 0, transit: 0, forwardTransit: 0, reverseTransit: 0, rcaPending: 0 }));
         }
         const a = map.get(key);
         a.count += 1;
         if (r.direction === "Forward") a.forward += 1;
         if (r.direction === "Reverse") a.reverse += 1;
-        if (r.agingBucket === "<=2 days") a.le2 += 1;
-        if (r.agingBucket === "3-5 days") a.d3to5 += 1;
-        if (r.agingBucket === ">5 days") a.gt5 += 1;
-        if (r.stage === "FM Pendency") a.fm += 1;
-        if (r.stage === "MM Pendency") a.mm += 1;
+        if (!r.networkArrival) a.networkBlank += 1;
+        addOverallBucket(a.buckets, r.overallAgingBucket);
+        if (r.stage === "FM Pickup Pending") a.fm += 1;
+        if (r.stage === "Picked Up - Not In-Transit") a.mm += 1;
         if (r.stage === "LM Pendency") a.lm += 1;
         if (r.stage === "Short Received") a.short += 1;
+        if (r.inVehicleTransit) a.transit += 1;
+        if (r.stage === "Forward In-Transit Pendency") a.forwardTransit += 1;
+        if (r.stage === "Reverse In-Transit Pendency") a.reverseTransit += 1;
         if (r.rcaEligible && r.rcaStatus === "Not Updated") a.rcaPending += 1;
       });
       return Array.from(map.values()).sort((a, b) => b.count - a.count);
@@ -1681,6 +1704,8 @@
             mm: 0,
             lm: 0,
             short: 0,
+            forwardTransit: 0,
+            reverseTransit: 0,
             loss: 0,
             wrongFacility: 0,
             rtoDepart: 0,
@@ -1691,10 +1716,12 @@
         }
         const a = map.get(hub);
         a.total += 1;
-        if (r.stage === "FM Pendency") a.fm += 1;
-        if (r.stage === "MM Pendency") a.mm += 1;
+        if (r.stage === "FM Pickup Pending") a.fm += 1;
+        if (r.stage === "Picked Up - Not In-Transit") a.mm += 1;
         if (r.stage === "LM Pendency") a.lm += 1;
         if (r.stage === "Short Received") a.short += 1;
+        if (r.stage === "Forward In-Transit Pendency") a.forwardTransit += 1;
+        if (r.stage === "Reverse In-Transit Pendency") a.reverseTransit += 1;
         if (r.lossBucket) a.loss += 1;
         if (r.wrongFacilityBucket) a.wrongFacility += 1;
         if (r.rtoDepartFacilityBucket) a.rtoDepart += 1;
@@ -1729,10 +1756,11 @@
       rows.forEach(r => {
         const stage = r.stage || "Unmapped";
         if (!map.has(stage)) {
-          map.set(stage, { stage, count: 0, buckets: emptyOverallBuckets() });
+          map.set(stage, { stage, count: 0, networkBlank: 0, buckets: emptyOverallBuckets() });
         }
         const a = map.get(stage);
         a.count += 1;
+        if (!r.networkArrival) a.networkBlank += 1;
         addOverallBucket(a.buckets, r.overallAgingBucket);
       });
       return Array.from(map.values()).sort((a, b) => b.count - a.count);
@@ -1767,8 +1795,10 @@
             label,
             total: 0,
             forward: 0,
+            forwardNetworkBlank: 0,
             forwardBuckets: emptyOverallBuckets(),
             rto: 0,
+            rtoNetworkBlank: 0,
             rtoBuckets: emptyOverallBuckets()
           });
         }
@@ -1776,9 +1806,11 @@
         a.total += 1;
         if (r.direction === "Forward") {
           a.forward += 1;
+          if (!r.networkArrival) a.forwardNetworkBlank += 1;
           addOverallBucket(a.forwardBuckets, r.overallAgingBucket);
         } else if (r.direction === "Reverse") {
           a.rto += 1;
+          if (!r.networkArrival) a.rtoNetworkBlank += 1;
           addOverallBucket(a.rtoBuckets, r.overallAgingBucket);
         }
       });
@@ -1799,6 +1831,8 @@
             mm: 0,
             lm: 0,
             short: 0,
+            forwardTransit: 0,
+            reverseTransit: 0,
             b5to7: 0,
             b7to10: 0,
             b10to15: 0,
@@ -1809,10 +1843,12 @@
         a.total += 1;
         if (r.direction === "Forward") a.forward += 1;
         if (r.direction === "Reverse") a.reverse += 1;
-        if (r.stage === "FM Pendency") a.fm += 1;
-        if (r.stage === "MM Pendency") a.mm += 1;
+        if (r.stage === "FM Pickup Pending") a.fm += 1;
+        if (r.stage === "Picked Up - Not In-Transit") a.mm += 1;
         if (r.stage === "LM Pendency") a.lm += 1;
         if (r.stage === "Short Received") a.short += 1;
+        if (r.stage === "Forward In-Transit Pendency") a.forwardTransit += 1;
+        if (r.stage === "Reverse In-Transit Pendency") a.reverseTransit += 1;
         if (r.networkAgingDays > 5 && r.networkAgingDays <= 7) a.b5to7 += 1;
         else if (r.networkAgingDays > 7 && r.networkAgingDays <= 10) a.b7to10 += 1;
         else if (r.networkAgingDays > 10 && r.networkAgingDays <= 15) a.b10to15 += 1;
@@ -1840,11 +1876,12 @@
     function buildManifestLaneRecord(row) {
       const status = clean(row["Status"]);
       const uber = clean(row["Uber Status"]);
-      if (terminalShipmentStatuses.has(status) || terminalUberStatuses.has(uber)) return null;
+      if (isExcludedShipmentStatus(status) || terminalUberStatuses.has(uber)) return null;
       const orderType = clean(row["Order Type"]);
       const direction = orderType.toLowerCase() === "rto" ? "Reverse" : "Forward";
       const fm = clean(row["FM Station Name"]) || clean(row["First Mile Station"]) || "Unknown FM";
       const lm = clean(row["LM Station Name"]) || clean(row["Last Mile Station"]) || "Unknown LM";
+      const networkArrival = parseDate(row["Network Arrival Date"]);
       return {
         productId: getProductId(row),
         lane: direction === "Reverse" ? `${lm} - ${fm}` : `${fm} - ${lm}`,
@@ -1852,7 +1889,8 @@
         laneType: direction === "Reverse" ? "RTO" : "Forward",
         lm,
         lmTerritory: clean(row["LM Territory"]) || "Unmapped",
-        networkArrival: parseDate(row["Network Arrival Date"])
+        manifested: parseDate(row["Manifested Date"]),
+        networkArrival
       };
     }
 
@@ -1874,21 +1912,23 @@
       const ensure = (lane, laneType) => {
         const key = `${lane}||${laneType}`;
         if (!map.has(key)) {
-          map.set(key, { lane, laneType, manifested: 0, pending: 0, fm: 0, mm: 0, lm: 0, short: 0 });
+          map.set(key, { lane, laneType, pickupRequests: 0, pickedUp: 0, pickupPending: 0, mm: 0, forwardTransit: 0, reverseTransit: 0, lm: 0, short: 0 });
         }
         return map.get(key);
       };
 
       manifestedRows.forEach(r => {
         const a = ensure(r.lane, r.laneType);
-        a.manifested += 1;
-        if (!r.networkArrival) a.pending += 1;
+        a.pickupRequests += 1;
+        if (r.networkArrival) a.pickedUp += 1;
+        else a.pickupPending += 1;
       });
 
       pendingRows.forEach(r => {
         const a = ensure(r.lane, r.direction === "Reverse" ? "RTO" : "Forward");
-        if (r.stage === "FM Pendency") a.fm += 1;
-        if (r.stage === "MM Pendency") a.mm += 1;
+        if (r.stage === "Picked Up - Not In-Transit") a.mm += 1;
+        if (r.stage === "Forward In-Transit Pendency") a.forwardTransit += 1;
+        if (r.stage === "Reverse In-Transit Pendency") a.reverseTransit += 1;
         if (r.stage === "LM Pendency") a.lm += 1;
         if (r.stage === "Short Received") a.short += 1;
       });
@@ -1913,16 +1953,18 @@
               lane: r.lane,
               laneType,
               pending: 0,
-              fm: 0,
               mm: 0,
+              forwardTransit: 0,
+              reverseTransit: 0,
               lm: 0,
               short: 0
             });
           }
           const a = map.get(key);
           a.pending += 1;
-          if (r.stage === "FM Pendency") a.fm += 1;
-          if (r.stage === "MM Pendency") a.mm += 1;
+          if (r.stage === "Picked Up - Not In-Transit") a.mm += 1;
+          if (r.stage === "Forward In-Transit Pendency") a.forwardTransit += 1;
+          if (r.stage === "Reverse In-Transit Pendency") a.reverseTransit += 1;
           if (r.stage === "LM Pendency") a.lm += 1;
           if (r.stage === "Short Received") a.short += 1;
         });
@@ -1992,8 +2034,10 @@
     }
 
     function stageClassFor(stage) {
-      if (stage === "FM Pendency") return "fm";
-      if (stage === "MM Pendency") return "mm";
+      if (stage === "FM Pickup Pending") return "fm";
+      if (stage === "Picked Up - Not In-Transit") return "mm";
+      if (stage === "Forward In-Transit Pendency") return "transit";
+      if (stage === "Reverse In-Transit Pendency") return "reverseTransit";
       if (stage === "LM Pendency") return "lm";
       if (stage === "Short Received") return "short";
       return "";
@@ -2038,7 +2082,7 @@
     }
 
     function inferReportDate(rows) {
-      const fields = ["modified", "Delivered Date", "LM Arrival Time", "Manifested Date"];
+      const fields = ["modified", "Network Arrival Date", "In Transit Time", "LM Arrival Time", "Manifested Date", "RTO Intitate Date", "Delivered Date"];
       const dates = [];
       rows.forEach(r => fields.forEach(f => {
         const d = parseDate(r[f]);
@@ -2052,16 +2096,18 @@
       if (value instanceof Date && !isNaN(value)) return value;
       const s = String(value).trim();
       if (!s) return null;
-      let m = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      let m = s.match(/^(\d{1,2})[-\/](\d{1,2})[-\/](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?)?$/i);
       if (m) {
-        let hour = Number(m[4]);
-        const ap = m[6].toUpperCase();
+        let hour = Number(m[4] || 0);
+        const minute = Number(m[5] || 0);
+        const second = Number(m[6] || 0);
+        const ap = (m[7] || "").toUpperCase();
         if (ap === "PM" && hour !== 12) hour += 12;
         if (ap === "AM" && hour === 12) hour = 0;
-        return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]), hour, Number(m[5]));
+        return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]), hour, minute, second);
       }
-      m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2}):(\d{2})(?:\.(\d+))?/);
-      if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), Number(m[6]));
+      m = s.match(/^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.(\d+))?)?/);
+      if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
       const d = new Date(s);
       return isNaN(d) ? null : d;
     }
@@ -2099,16 +2145,16 @@
       if (Object.prototype.hasOwnProperty.call(bucketCounts, bucket)) bucketCounts[bucket] += 1;
     }
 
-    function criticalAgingBucket(days) {
+    function criticalAgingBucket(days, alreadyRtoMarked = false) {
       if (days === "" || days == null || Number.isNaN(Number(days))) return "";
-      if (days >= 10) return "Critical 10+ Days";
-      if (days >= 7) return "RTO Marking Watch";
+      if (days >= 10) return alreadyRtoMarked ? "RTO Critical Aging" : "Critical 10+ Days";
+      if (days >= 7) return alreadyRtoMarked ? "RTO Aging Watch" : "RTO Marking Watch";
       if (days > 5) return "6 Day Watch";
       return "";
     }
 
     function criticalClassFor(bucket) {
-      if (bucket === "Critical 10+ Days") return "critical";
+      if (bucket === "Critical 10+ Days" || bucket === "RTO Critical Aging") return "critical";
       if (bucket === "RTO Marking Watch") return "watch";
       return "amber";
     }
@@ -2116,6 +2162,8 @@
     function filterCriticalDrillRows(rows) {
       if (state.criticalDrill === "forward") return rows.filter(r => r.direction === "Forward");
       if (state.criticalDrill === "reverse") return rows.filter(r => r.direction === "Reverse");
+      if (state.criticalDrill === "lm") return rows.filter(r => r.stage === "LM Pendency");
+      if (state.criticalDrill === "inTransit") return rows.filter(r => r.inVehicleTransit);
       if (state.criticalDrill === "watch") return rows.filter(r => r.criticalBucket === "RTO Marking Watch");
       if (state.criticalDrill === "critical") return rows.filter(r => r.criticalBucket === "Critical 10+ Days");
       return rows;
@@ -2124,6 +2172,8 @@
     function criticalDrillTitle(drill) {
       if (drill === "forward") return "Critical Forward Tracking IDs";
       if (drill === "reverse") return "Critical RTO Tracking IDs";
+      if (drill === "lm") return "Critical LM Pendency Tracking IDs";
+      if (drill === "inTransit") return "Critical In-Transit Tracking IDs";
       if (drill === "watch") return "7-9 Day Watch Tracking IDs";
       if (drill === "critical") return "10+ Day Critical Tracking IDs";
       return "Critical Aging Tracking IDs";
@@ -2155,6 +2205,18 @@
     function clean(value) {
       if (value == null) return "";
       return String(value).trim();
+    }
+
+    function statusKey(value) {
+      return clean(value).toLowerCase().replace(/\s+/g, " ");
+    }
+
+    function isExcludedShipmentStatus(value) {
+      return excludedShipmentStatuses.has(statusKey(value));
+    }
+
+    function isInVehicleTransitStatus(status, uber) {
+      return /in\s*vehicle\s*transit/i.test(`${status} ${uber}`);
     }
 
     function getFirstValue(row, names) {
@@ -2191,6 +2253,10 @@
       if (!d) return "-";
       if (!(d instanceof Date)) return String(d);
       return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    }
+
+    function fmtAge(days) {
+      return days === "" || days == null || Number.isNaN(Number(days)) ? "-" : `${days}d`;
     }
 
     function localDateKey(d) {
@@ -2263,7 +2329,7 @@
 
     async function saveSharedShipmentData(fileName, mode) {
       if (!state.adminPassword) throw new Error("Admin password is required to save shared data.");
-      const packed = await packRowsForStore(state.raw);
+      const packed = await packRowsForStore(slimRowsForSharedStore(state.raw));
       const response = await fetch("/.netlify/functions/shipment-store", {
         method: "POST",
         headers: {
@@ -2330,6 +2396,19 @@
 
     function isSharedStoreAvailable() {
       return location.protocol === "https:" || location.protocol === "http:";
+    }
+
+    function slimRowsForSharedStore(rows) {
+      return rows.map(row => {
+        const compact = {};
+        sharedStoreColumns.forEach(name => {
+          if (Object.prototype.hasOwnProperty.call(row, name)) {
+            const value = row[name];
+            if (value != null && String(value).trim() !== "") compact[name] = value;
+          }
+        });
+        return compact;
+      });
     }
 
     async function packRowsForStore(rows) {
@@ -2433,3 +2512,4 @@
   </script>
 </body>
 </html>
+
