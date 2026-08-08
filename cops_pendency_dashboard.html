@@ -789,12 +789,20 @@
     }
 
     function loadRows(rows, fileName, mode = "replace", options = {}) {
-      const headers = rows[0] ? Object.keys(rows[0]) : [];
-      const missing = requiredHeaders.filter(h => !headers.includes(h));
+      rows = canonicalizeShipmentRows(rows);
+      const isStoredRestore = options.persist === false;
+      let headers = allHeaders(rows);
+      let missing = requiredHeaders.filter(h => !headers.includes(h));
+      if (missing.length && isStoredRestore) {
+        rows = ensureShipmentSchema(rows);
+        headers = allHeaders(rows);
+        missing = requiredHeaders.filter(h => !headers.includes(h));
+      }
       if (missing.length) {
         alert("Missing expected columns: " + missing.join(", "));
         return;
       }
+      rows = ensureShipmentSchema(rows);
       const uploadedCount = rows.length;
       rows = rows.filter(row => !isExcludedShipmentStatus(row["Status"]));
       const cancelledRemoved = uploadedCount - rows.length;
@@ -2249,6 +2257,38 @@
       return Array.from(new Set(values.filter(Boolean))).sort((a, b) => a.localeCompare(b));
     }
 
+    function allHeaders(rows) {
+      return Array.from(new Set(rows.flatMap(row => Object.keys(row || {}))));
+    }
+
+    function canonicalizeShipmentRows(rows) {
+      const canonicalNames = Array.from(new Set([...requiredHeaders, ...sharedStoreColumns]));
+      const byKey = Object.fromEntries(canonicalNames.map(name => [normalizeHeaderName(name), name]));
+      return rows.map(row => {
+        const normalized = {};
+        Object.entries(row || {}).forEach(([key, value]) => {
+          const canonical = byKey[normalizeHeaderName(key)] || key;
+          normalized[canonical] = value;
+        });
+        return normalized;
+      });
+    }
+
+    function ensureShipmentSchema(rows) {
+      const schema = Array.from(new Set([...requiredHeaders, ...sharedStoreColumns]));
+      return rows.map(row => {
+        const normalized = { ...(row || {}) };
+        schema.forEach(name => {
+          if (!Object.prototype.hasOwnProperty.call(normalized, name)) normalized[name] = "";
+        });
+        return normalized;
+      });
+    }
+
+    function normalizeHeaderName(name) {
+      return String(name || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+
     function fmtDate(d) {
       if (!d) return "-";
       if (!(d instanceof Date)) return String(d);
@@ -2402,10 +2442,7 @@
       return rows.map(row => {
         const compact = {};
         sharedStoreColumns.forEach(name => {
-          if (Object.prototype.hasOwnProperty.call(row, name)) {
-            const value = row[name];
-            if (value != null && String(value).trim() !== "") compact[name] = value;
-          }
+          compact[name] = Object.prototype.hasOwnProperty.call(row, name) && row[name] != null ? row[name] : "";
         });
         return compact;
       });

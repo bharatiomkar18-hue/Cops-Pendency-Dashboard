@@ -10,11 +10,13 @@
   from = "/"
   to = "/cops_pendency_dashboard.html"
   status = 200
+  force = true
 
 [[redirects]]
   from = "/dashboard"
   to = "/cops_pendency_dashboard.html"
   status = 200
+  force = true
 
 [[headers]]
   for = "/*"
